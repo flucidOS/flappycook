@@ -1,0 +1,14 @@
+name=hello
+version=2.12
+arch=x86_64
+source=https://ftp.gnu.org/gnu/hello/hello-2.12.tar.gz
+
+
+build() {
+	./configure --prefix=/usr
+	make
+}
+
+package() {
+	make DESTDIR="$pkgdir" install
+}

@@ -4,3 +4,5 @@ flappycook
 build/
 pkg/
 output/
+sources/
+/tmp/
