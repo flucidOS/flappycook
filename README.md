@@ -1,7 +1,7 @@
 # **Flappycook – Package Builder**
 
 Flappycook is a package recipe builder used to generate
-.pkg.tar.zst binary packages for the Flappy package manager.
+`.pkg.tar.zst` binary packages for the Flappy package manager.
 
 > [!NOTE]
 > **Flappycook** is currently under development as part of the **flucidOS package ecosystem**.
