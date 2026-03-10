@@ -1,6 +1,6 @@
 # **Flappycook – Package Builder**
 
-FlappyCook is a package recipe builder used to generate
+Flappycook is a package recipe builder used to generate
 .pkg.tar.zst binary packages for the Flappy package manager.
 
 > [!NOTE]
