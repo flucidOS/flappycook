@@ -1,0 +1,6 @@
+flappycook
+*.o
+
+build/
+pkg/
+output/
