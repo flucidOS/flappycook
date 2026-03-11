@@ -25,6 +25,9 @@ int load_recipe(const char *path, Recipe *r)
 
         else if (strncmp(line, "source=", 7) == 0)
             sscanf(line + 7, "%511s", r->source);
+
+        else if (strncmp(line, "sha256=", 7) == 0)
+            sscanf(line + 7, "%127s", r->sha256);
     }
 
     fclose(f);

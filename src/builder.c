@@ -38,6 +38,19 @@ int build_package(Recipe *r)
         return 1;
     }
 
+    /* Verify checksum */
+    printf("Verifying checksum...\n");
+
+    sprintf(cmd,
+        "echo \"%s  sources/%s/source.tar.gz\" | sha256sum -c -",
+        r->sha256,
+        r->name);
+
+    if (system(cmd) != 0) {
+        fprintf(stderr, "Checksum verification failed\n");
+        return 1;
+    }
+
     /* Extract source */
     printf("Extracting source...\n");
 
