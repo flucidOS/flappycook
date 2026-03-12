@@ -1,8 +1,27 @@
+# Binary 
 flappycook
+
+# Object files
 *.o
 
+# Build directories
 build/
 pkg/
 output/
 sources/
 /tmp/
+root/
+
+# Temporary files
+*.tmp
+*.log
+*.swp
+*.swo
+*~
+
+# Editor folders
+.vscode/
+.idea/
+
+# OS junk
+.DS_Store

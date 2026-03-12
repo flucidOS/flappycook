@@ -1,7 +1,7 @@
 CC=gcc
 CFLAGS=-Wall -Wextra -Werror -O2 -Iinclude
 
-SRC=src/main.c src/recipe.c src/builder.c
+SRC=src/main.c src/recipe.c src/builder.c src/pkginfo.c 
 OBJ=$(SRC:.c=.o)
 
 flappycook: $(OBJ)

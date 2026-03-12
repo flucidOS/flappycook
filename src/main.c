@@ -18,7 +18,7 @@ int main(int argc, char *argv[])
 
     Recipe r;
 
-    if (load_recipe(argv[2], &r) != 0) {
+    if (parse_recipe(argv[2], &r) != 0) {
         printf("Failed to load recipe\n");
         return 1;
     }
