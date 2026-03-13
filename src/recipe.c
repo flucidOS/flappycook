@@ -13,13 +13,37 @@ static void trim(char *s)
 
     memmove(s, p, strlen(p) + 1);
 
-    for (int i = strlen(s) - 1; i >= 0; i--)
+    for (int i = (int)strlen(s) - 1; i >= 0; i--)
     {
         if (s[i] == '"' || s[i] == '\n' || s[i] == ' ')
-            s[i] = 0;
+            s[i] = '\0';
         else
             break;
     }
+}
+
+/*
+ * Fix 7: reject field values that contain shell metacharacters.
+ * name, version, and arch are used directly in shell commands,
+ * so we only allow alphanumerics, dots, hyphens, and underscores.
+ */
+static int validate_field(const char *field, const char *value)
+{
+    for (const char *p = value; *p; p++)
+    {
+        char c = *p;
+        if (!( (c >= 'a' && c <= 'z') ||
+               (c >= 'A' && c <= 'Z') ||
+               (c >= '0' && c <= '9') ||
+               c == '.' || c == '-' || c == '_' ))
+        {
+            fprintf(stderr,
+                "Error: field '%s' contains illegal character '%c'\n",
+                field, c);
+            return -1;
+        }
+    }
+    return 0;
 }
 
 int parse_recipe(const char *path, Recipe *r)
@@ -41,24 +65,65 @@ int parse_recipe(const char *path, Recipe *r)
 
     while (fgets(line, sizeof(line), f))
     {
-        /* Skip comments and blank lines */
         if (line[0] == '#' || line[0] == '\n')
             continue;
 
         if (strncmp(line, "name=", 5) == 0)
         {
-            strcpy(r->name, line + 5);
-            trim(r->name);
+            char *val = line + 5;
+            trim(val);
+            /* Fix 6: bounded copy with length check */
+            if (snprintf(r->name, sizeof(r->name), "%s", val)
+                    >= (int)sizeof(r->name))
+            {
+                fprintf(stderr, "Error: name too long\n");
+                fclose(f);
+                return -1;
+            }
+            /* Fix 7: validate after storing */
+            if (validate_field("name", r->name) != 0)
+            {
+                fclose(f);
+                return -1;
+            }
         }
         else if (strncmp(line, "version=", 8) == 0)
         {
-            strcpy(r->version, line + 8);
-            trim(r->version);
+            char *val = line + 8;
+            trim(val);
+            /* Fix 6 */
+            if (snprintf(r->version, sizeof(r->version), "%s", val)
+                    >= (int)sizeof(r->version))
+            {
+                fprintf(stderr, "Error: version too long\n");
+                fclose(f);
+                return -1;
+            }
+            /* Fix 7 */
+            if (validate_field("version", r->version) != 0)
+            {
+                fclose(f);
+                return -1;
+            }
         }
         else if (strncmp(line, "arch=", 5) == 0)
         {
-            strcpy(r->arch, line + 5);
-            trim(r->arch);
+            char *val = line + 5;
+            trim(val);
+            /* Fix 6 */
+            if (snprintf(r->arch, sizeof(r->arch), "%s", val)
+                    >= (int)sizeof(r->arch))
+            {
+                fprintf(stderr, "Error: arch too long\n");
+                fclose(f);
+                return -1;
+            }
+            /* Fix 7 */
+            if (validate_field("arch", r->arch) != 0)
+            {
+                fclose(f);
+                return -1;
+            }
         }
         else if (strncmp(line, "source=", 7) == 0)
         {
@@ -66,19 +131,60 @@ int parse_recipe(const char *path, Recipe *r)
             trim(val);
             if (strlen(val))
             {
-                strcpy(r->sources[r->source_count++], val);
+                if (r->source_count >= MAX_SOURCES)
+                {
+                    fprintf(stderr, "Error: too many sources\n");
+                    fclose(f);
+                    return -1;
+                }
+                /* Fix 6 */
+                if (snprintf(r->sources[r->source_count],
+                             sizeof(r->sources[r->source_count]),
+                             "%s", val)
+                        >= (int)sizeof(r->sources[r->source_count]))
+                {
+                    fprintf(stderr, "Error: source URL too long\n");
+                    fclose(f);
+                    return -1;
+                }
+                r->source_count++;
             }
         }
         else if (strncmp(line, "sha256=", 7) == 0)
         {
             char *val = line + 7;
             trim(val);
-            if (r->source_count > 0 && strlen(val))
+
+            if (strlen(val))
             {
-                strcpy(r->checksums[r->source_count - 1], val);
+                int assigned = 0;
+                for (int i = r->source_count - 1; i >= 0; i--)
+                {
+                    if (strlen(r->checksums[i]) == 0)
+                    {
+                        /* Fix 6 */
+                        if (snprintf(r->checksums[i],
+                                     sizeof(r->checksums[i]),
+                                     "%s", val)
+                                >= (int)sizeof(r->checksums[i]))
+                        {
+                            fprintf(stderr,
+                                "Error: sha256 value too long\n");
+                            fclose(f);
+                            return -1;
+                        }
+                        assigned = 1;
+                        break;
+                    }
+                }
+                if (!assigned)
+                {
+                    fprintf(stderr,
+                        "Warning: sha256= has no matching source,"
+                        " ignoring\n");
+                }
             }
         }
-        /* Ignore function bodies - builder sources the recipe file directly */
     }
 
     fclose(f);

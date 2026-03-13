@@ -3,7 +3,8 @@
 #include <string.h>
 #include "pkginfo.h"
 
-void write_pkginfo(Recipe *r, const char *pkgdir)
+/* Fix 2: return int instead of void, propagate error up */
+int write_pkginfo(Recipe *r, const char *pkgdir)
 {
     char path[512];
 
@@ -12,7 +13,7 @@ void write_pkginfo(Recipe *r, const char *pkgdir)
     FILE *f = fopen(path, "w");
     if (!f) {
         perror("fopen");
-        exit(1);
+        return 1;
     }
 
     fprintf(f, "pkgname = %s\n", r->name);
@@ -21,4 +22,5 @@ void write_pkginfo(Recipe *r, const char *pkgdir)
     fprintf(f, "arch = %s\n", r->arch);
 
     fclose(f);
+    return 0;
 }
