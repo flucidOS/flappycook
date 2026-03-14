@@ -22,11 +22,6 @@ static void trim(char *s)
     }
 }
 
-/*
- * Fix 7: reject field values that contain shell metacharacters.
- * name, version, and arch are used directly in shell commands,
- * so we only allow alphanumerics, dots, hyphens, and underscores.
- */
 static int validate_field(const char *field, const char *value)
 {
     for (const char *p = value; *p; p++)
@@ -72,7 +67,6 @@ int parse_recipe(const char *path, Recipe *r)
         {
             char *val = line + 5;
             trim(val);
-            /* Fix 6: bounded copy with length check */
             if (snprintf(r->name, sizeof(r->name), "%s", val)
                     >= (int)sizeof(r->name))
             {
@@ -80,7 +74,6 @@ int parse_recipe(const char *path, Recipe *r)
                 fclose(f);
                 return -1;
             }
-            /* Fix 7: validate after storing */
             if (validate_field("name", r->name) != 0)
             {
                 fclose(f);
@@ -91,7 +84,6 @@ int parse_recipe(const char *path, Recipe *r)
         {
             char *val = line + 8;
             trim(val);
-            /* Fix 6 */
             if (snprintf(r->version, sizeof(r->version), "%s", val)
                     >= (int)sizeof(r->version))
             {
@@ -99,7 +91,6 @@ int parse_recipe(const char *path, Recipe *r)
                 fclose(f);
                 return -1;
             }
-            /* Fix 7 */
             if (validate_field("version", r->version) != 0)
             {
                 fclose(f);
@@ -110,7 +101,6 @@ int parse_recipe(const char *path, Recipe *r)
         {
             char *val = line + 5;
             trim(val);
-            /* Fix 6 */
             if (snprintf(r->arch, sizeof(r->arch), "%s", val)
                     >= (int)sizeof(r->arch))
             {
@@ -118,7 +108,6 @@ int parse_recipe(const char *path, Recipe *r)
                 fclose(f);
                 return -1;
             }
-            /* Fix 7 */
             if (validate_field("arch", r->arch) != 0)
             {
                 fclose(f);
@@ -137,7 +126,6 @@ int parse_recipe(const char *path, Recipe *r)
                     fclose(f);
                     return -1;
                 }
-                /* Fix 6 */
                 if (snprintf(r->sources[r->source_count],
                              sizeof(r->sources[r->source_count]),
                              "%s", val)
@@ -147,6 +135,8 @@ int parse_recipe(const char *path, Recipe *r)
                     fclose(f);
                     return -1;
                 }
+                r->checksum_types[r->source_count] = CKSUM_NONE;
+                r->subdirs[r->source_count][0] = '\0';
                 r->source_count++;
             }
         }
@@ -160,9 +150,8 @@ int parse_recipe(const char *path, Recipe *r)
                 int assigned = 0;
                 for (int i = r->source_count - 1; i >= 0; i--)
                 {
-                    if (strlen(r->checksums[i]) == 0)
+                    if (r->checksum_types[i] == CKSUM_NONE)
                     {
-                        /* Fix 6 */
                         if (snprintf(r->checksums[i],
                                      sizeof(r->checksums[i]),
                                      "%s", val)
@@ -173,16 +162,106 @@ int parse_recipe(const char *path, Recipe *r)
                             fclose(f);
                             return -1;
                         }
+                        r->checksum_types[i] = (strcmp(val, "SKIP") == 0)
+                                               ? CKSUM_SKIP : CKSUM_SHA256;
                         assigned = 1;
                         break;
                     }
                 }
                 if (!assigned)
-                {
                     fprintf(stderr,
                         "Warning: sha256= has no matching source,"
                         " ignoring\n");
+            }
+        }
+        else if (strncmp(line, "subdir=", 7) == 0)
+        {
+            char *val = line + 7;
+            trim(val);
+
+            if (strlen(val))
+            {
+                int assigned = 0;
+                for (int i = r->source_count - 1; i >= 0; i--)
+                {
+                    if (strlen(r->subdirs[i]) == 0)
+                    {
+                        if (snprintf(r->subdirs[i],
+                                     sizeof(r->subdirs[i]),
+                                     "%s", val)
+                                >= (int)sizeof(r->subdirs[i]))
+                        {
+                            fprintf(stderr,
+                                "Error: subdir value too long\n");
+                            fclose(f);
+                            return -1;
+                        }
+                        if (validate_field("subdir", r->subdirs[i]) != 0)
+                        {
+                            fclose(f);
+                            return -1;
+                        }
+                        assigned = 1;
+                        break;
+                    }
                 }
+                if (!assigned)
+                    fprintf(stderr,
+                        "Warning: subdir= has no matching source,"
+                        " ignoring\n");
+            }
+        }
+        else if (strncmp(line, "patch=", 6) == 0)
+        {
+            char *val = line + 6;
+            trim(val);
+            if (strlen(val))
+            {
+                if (r->patch_count >= MAX_PATCHES)
+                {
+                    fprintf(stderr, "Error: too many patches\n");
+                    fclose(f);
+                    return -1;
+                }
+                if (snprintf(r->patches[r->patch_count],
+                             sizeof(r->patches[r->patch_count]),
+                             "%s", val)
+                        >= (int)sizeof(r->patches[r->patch_count]))
+                {
+                    fprintf(stderr, "Error: patch filename too long\n");
+                    fclose(f);
+                    return -1;
+                }
+                r->patch_count++;
+            }
+        }
+        else if (strncmp(line, "depend=", 7) == 0)
+        {
+            char *val = line + 7;
+            trim(val);
+            if (strlen(val))
+            {
+                if (r->depend_count >= MAX_DEPENDS)
+                {
+                    fprintf(stderr, "Error: too many dependencies\n");
+                    fclose(f);
+                    return -1;
+                }
+                if (snprintf(r->depends[r->depend_count],
+                             sizeof(r->depends[r->depend_count]),
+                             "%s", val)
+                        >= (int)sizeof(r->depends[r->depend_count]))
+                {
+                    fprintf(stderr, "Error: dependency name too long\n");
+                    fclose(f);
+                    return -1;
+                }
+                if (validate_field("depend", r->depends[r->depend_count]) != 0)
+                {
+                    fclose(f);
+                    return -1;
+                }
+                r->depend_count++;
             }
         }
     }

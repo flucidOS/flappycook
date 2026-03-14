@@ -1,5 +1,5 @@
 #include <stdio.h>
-#include <stdarg.h>   /* Fix: needed for va_start, va_end in build_cmd */
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -64,9 +64,10 @@ static const char *get_basename(const char *path)
     return p ? p + 1 : path;
 }
 
-/*
- * Fix 7: single-quote-escape a string for safe shell interpolation.
- */
+/* ----------------------------- */
+/* Shell-safe single-quote wrap  */
+/* ----------------------------- */
+
 static int shell_safe(const char *in, char *out, size_t outsz)
 {
     size_t pos = 0;
@@ -127,7 +128,7 @@ static int fetch_sources(Recipe *r)
         if (strncmp(src, "http://", 7) == 0 ||
             strncmp(src, "https://", 8) == 0) {
 
-            printf("Downloading %s\n", src);
+            printf("  Downloading %s\n", src);
 
             if (build_cmd(cmd, sizeof(cmd),
                           "curl -L %s -o sources/%s/%s",
@@ -138,8 +139,7 @@ static int fetch_sources(Recipe *r)
                 return 1;
         }
         else {
-
-            printf("Copying local source %s\n", src);
+            printf("  Copying local source %s\n", src);
 
             if (build_cmd(cmd, sizeof(cmd),
                           "cp recipes/%s sources/%s/ 2>/dev/null",
@@ -177,8 +177,19 @@ static int verify_checksums(Recipe *r)
 
     for (int i = 0; i < r->source_count; i++) {
 
-        if (strcmp(r->checksums[i], "SKIP") == 0)
+        if (r->checksum_types[i] == CKSUM_NONE) {
+            fprintf(stderr,
+                "Error: no checksum declared for source '%s'.\n"
+                "  Use sha256=<hash> or sha256=SKIP to bypass.\n",
+                r->sources[i]);
+            return 1;
+        }
+
+        if (r->checksum_types[i] == CKSUM_SKIP) {
+            printf("  Skipping checksum for %s\n",
+                   get_basename(r->sources[i]));
             continue;
+        }
 
         const char *src  = r->sources[i];
         const char *base = get_basename(src);
@@ -189,6 +200,7 @@ static int verify_checksums(Recipe *r)
             return 1;
         }
 
+        /* Always SHA-256 — FlucidOS does not accept MD5 checksums */
         if (build_cmd(cmd, sizeof(cmd),
                       "echo %s  sources/%s/%s | sha256sum -c -",
                       safe_cksum, safe_name, safe_base))
@@ -210,9 +222,10 @@ static int extract_sources(Recipe *r)
     char cmd[CMD_BUF];
     char safe_name[256];
     char safe_base[512];
+    char safe_subdir[256];
     int  extracted = 0;
 
-    printf("Extracting source archive...\n");
+    printf("Extracting sources...\n");
 
     if (shell_safe(r->name, safe_name, sizeof(safe_name))) {
         fprintf(stderr, "Error: package name too long to escape\n");
@@ -221,36 +234,152 @@ static int extract_sources(Recipe *r)
 
     for (int i = 0; i < r->source_count; i++) {
 
-        const char *src  = r->sources[i];
-        const char *base = get_basename(src);
+        const char *src    = r->sources[i];
+        const char *base   = get_basename(src);
+        const char *subdir = r->subdirs[i];
 
-        if (strstr(base, ".tar.gz")  ||
-            strstr(base, ".tar.xz")  ||
-            strstr(base, ".tar.bz2") ||
-            strstr(base, ".tgz")) {
+        if (!(strstr(base, ".tar.gz")  ||
+              strstr(base, ".tar.xz")  ||
+              strstr(base, ".tar.bz2") ||
+              strstr(base, ".tgz")))
+            continue;
 
-            if (shell_safe(base, safe_base, sizeof(safe_base))) {
+        if (shell_safe(base, safe_base, sizeof(safe_base))) {
+            fprintf(stderr, "Error: source name too long to escape\n");
+            return 1;
+        }
+
+        if (strlen(subdir) > 0) {
+            /*
+             * Secondary source: extract into sources/<name>/<subdir>/
+             * with --strip-components=1 to drop the upstream top-level
+             * directory. Accessible in build() via $srcdir/<subdir>.
+             */
+            if (shell_safe(subdir, safe_subdir, sizeof(safe_subdir))) {
                 fprintf(stderr,
-                    "Error: source name too long to escape\n");
+                    "Error: subdir name too long to escape\n");
                 return 1;
             }
+
+            printf("  Extracting %s -> sources/%s/%s/\n",
+                   base, r->name, subdir);
+
+            if (build_cmd(cmd, sizeof(cmd),
+                          "mkdir -p sources/%s/%s",
+                          safe_name, safe_subdir))
+                return 1;
+
+            if (exec_cmd(cmd))
+                return 1;
+
+            if (build_cmd(cmd, sizeof(cmd),
+                          "tar -xf sources/%s/%s -C sources/%s/%s"
+                          " --strip-components=1",
+                          safe_name, safe_base,
+                          safe_name, safe_subdir))
+                return 1;
+        }
+        else {
+            /*
+             * Primary source: extract flat into sources/<name>/
+             * stripping the upstream top-level directory name.
+             */
+            printf("  Extracting %s\n", base);
 
             if (build_cmd(cmd, sizeof(cmd),
                           "tar -xf sources/%s/%s -C sources/%s"
                           " --strip-components=1",
                           safe_name, safe_base, safe_name))
                 return 1;
-
-            if (exec_cmd(cmd))
-                return 1;
-
-            extracted = 1;
         }
+
+        if (exec_cmd(cmd))
+            return 1;
+
+        extracted = 1;
     }
 
     if (!extracted) {
         fprintf(stderr, "No source archive found\n");
         return 1;
+    }
+
+    return 0;
+}
+
+/* ----------------------------- */
+/* Apply patches                 */
+/* ----------------------------- */
+
+static int prepare_sources(Recipe *r)
+{
+    char cmd[CMD_BUF];
+    char safe_name[256];
+    char safe_patch[512];
+
+    if (r->patch_count == 0)
+        return 0;
+
+    printf("Applying patches...\n");
+
+    if (shell_safe(r->name, safe_name, sizeof(safe_name))) {
+        fprintf(stderr, "Error: package name too long to escape\n");
+        return 1;
+    }
+
+    for (int i = 0; i < r->patch_count; i++) {
+
+        const char *patch = r->patches[i];
+
+        printf("  Applying %s\n", patch);
+
+        if (shell_safe(patch, safe_patch, sizeof(safe_patch))) {
+            fprintf(stderr,
+                "Error: patch filename too long to escape\n");
+            return 1;
+        }
+
+        /*
+         * Detect compressed patches and decompress on the fly:
+         *   .xz  -> xzcat
+         *   .gz  -> zcat
+         *   .bz2 -> bzcat
+         *   plain .patch or no extension -> direct redirect
+         *
+         * Applied with -p1 from inside the extracted source directory.
+         * --no-backup-if-mismatch keeps the source tree clean.
+         */
+        const char *decompressor = NULL;
+
+        if (strstr(patch, ".xz"))
+            decompressor = "xzcat";
+        else if (strstr(patch, ".gz"))
+            decompressor = "zcat";
+        else if (strstr(patch, ".bz2"))
+            decompressor = "bzcat";
+
+        if (decompressor) {
+            if (build_cmd(cmd, sizeof(cmd),
+                          "%s recipes/%s"
+                          " | patch -p1 --no-backup-if-mismatch"
+                          " -d sources/%s",
+                          decompressor, safe_patch, safe_name))
+                return 1;
+        }
+        else {
+            if (build_cmd(cmd, sizeof(cmd),
+                          "patch -p1 --no-backup-if-mismatch"
+                          " -d sources/%s"
+                          " < recipes/%s",
+                          safe_name, safe_patch))
+                return 1;
+        }
+
+        if (exec_cmd(cmd)) {
+            fprintf(stderr,
+                "Error: patch failed to apply: %s\n", patch);
+            return 1;
+        }
     }
 
     return 0;
@@ -271,11 +400,6 @@ static int run_build_script(Recipe *r)
         return 1;
     }
 
-    /*
-     * Fix 8: unique temp script via mkstemp.
-     * Use a fixed-length prefix only — avoids format-truncation
-     * warning and keeps the path well within build_script[128].
-     */
     snprintf(r->build_script, sizeof(r->build_script),
              "/tmp/flappycook_XXXXXX");
 
@@ -400,7 +524,8 @@ static int create_package(Recipe *r)
     }
 
     if (build_cmd(cmd, sizeof(cmd),
-        "cd pkg/%s && tar -I zstd -cf ../../output/%s-%s.pkg.tar.zst .",
+        "cd pkg/%s && "
+        "tar -I zstd -cf ../../output/%s-%s.pkg.tar.zst .",
         safe_name, safe_name, safe_version))
         return 1;
 
@@ -442,12 +567,12 @@ int build_package(Recipe *r)
     if (fetch_sources(r))     return 1;
     if (verify_checksums(r))  return 1;
     if (extract_sources(r))   return 1;
+    if (prepare_sources(r))   return 1;
     if (run_build_script(r))  return 1;
     if (generate_pkginfo(r))  return 1;
     if (generate_filelist(r)) return 1;
     if (create_package(r))    return 1;
 
-    /* Fix 8: clean up per-build temp script */
     unlink(r->build_script);
 
     printf("Package created: output/%s-%s.pkg.tar.zst\n",

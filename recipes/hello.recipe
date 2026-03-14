@@ -1,20 +1,15 @@
-# This is a test file, used for testing
-
-
 name=hello
 version=2.12
 arch=x86_64
 source=https://ftp.gnu.org/gnu/hello/hello-2.12.tar.gz
-sha256=cf04af86dc085268c5f4470fbae49b18afbc221b78096aab842d934a76bad0ab 
+sha256=cf04af86dc085268c5f4470fbae49b18afbc221b78096aab842d934a76bad0ab
+patch=fix-greeting.patch
 
 build() {
-	./configure --prefix=/usr
-	make
+    ./configure --prefix=/usr
+    make
 }
 
 package() {
-	make DESTDIR="$pkgdir" install
+    make DESTDIR="$pkgdir" install
 }
-
-
-
